@@ -6,8 +6,11 @@
 */
 function doAction(data, callback){
     $.post(window.location.href, data, function(response){
-        if(typeof callback !== "undefined") callback();
-        if(response.length) $(".ajax-success").show().stop(true).css("opacity", 1).fadeOut(17000).children().html(response);
+        if(typeof callback !== "undefined"){
+        callback(response);
+    }else{
+            if(response.length) $(".ajax-success").show().stop(true).css("opacity", 1).fadeOut(17000).children().html(response);
+    }
     });
 };
 
@@ -57,8 +60,13 @@ $(document).ready(function(){
                 case "playing":
                     lastPath = data.path;
                     $("#status").html(t("Playing")+": <span class='current-file'>"+data.path+'</span>');
+                    if (data.path.includes("&id=")) {
+                        var subsonicname = "Subsonic File";
+                        if ( data.name !== undefined ) subsonicname = data.name;
+                        $(".current-file").html(subsonicname);
+                    }
                     $(".files .file").filter("[data-path='"+data.path+"']").addClass("active viewed");
-                break;
+                    break;
                 case "stopped":
                     $("#status").html(t("video.notselected"));
                     var currentFile = $(".file").filter("[data-path='"+lastPath+"']");
@@ -73,6 +81,8 @@ $(document).ready(function(){
     };
     fetchStatus();
 
+    // On-Click events
+    // settings
     $(document).on("click", ".action[data-action]", function(ev){
         var el = $(ev.currentTarget);
         switch(el.attr("data-action")){
@@ -84,10 +94,21 @@ $(document).ready(function(){
                 doAction(data);
                 break;
         }
+    // files
     }).on("click", ".files .file:not(.active)", function(ev){
-        $("#status").html(t("loading")+"...");
-        $(".files .status-line").trigger("click");
-        doAction({"action" : "shortcut", "shortcut" : "start", "path" : $(this).attr("data-path")});
+    if($(this).attr("data-folder") == "1" || $(this).attr("data-folder") == "true"){
+        var id = $(this).attr("data-subsonicid");
+        $("#" + id).toggle();
+        doAction({"action" : "openfolder", "name" : $(this).attr("data-path"), "id" : $(this).attr("data-subsonicid"), "expanded" : $(this).attr("data-expanded")}, function(response){
+            $("#" + id).html(response);
+            return;
+        });
+    }else{
+            $("#status").html(t("loading")+"...");
+            $(".files .status-line").trigger("click");
+            doAction({"action" : "shortcut", "shortcut" : "start", "path" : $(this).attr("data-path")});
+    }
+    // omx-control
     }).on("click", ".omx-buttons .button[data-shortcut]", function(ev){
         if($(this).attr("data-shortcut") == "q") {
             if(lastStatus == "playing") autoplayNext = false;
@@ -112,6 +133,7 @@ $(document).ready(function(){
             $("#filelist .file").show().each(function(){
                 $(this).find(".path").html($(this).attr("data-path"));
             });
+            $("#subsonicsearch").hide();
             if(v.length == 0 && ev.type == "blur") $(this).val($(this).attr("data-value"));
             return;
         }
@@ -141,6 +163,17 @@ $(document).ready(function(){
                 html = html.replace(new RegExp("_"+i+"_", "ig"), '<span class="match">'+matches[i]+'</span>');
             }
             f.find(".path").html(html);
+        });
+    //Resolve Subsonic Search
+        $("#filelist .subsonic").hide();
+    $("#subsonicsearch").show();
+    $("#subsonicsearch").html("");
+    console.log("Initializing Subsonic Search");
+        doAction({"action" : "subsonicsearch", "search" : v}, function(response){
+            console.log(v);
+            console.log(response);
+            $("#subsonicsearch").html(response);
+            return;
         });
     });
     // toggle filelist
