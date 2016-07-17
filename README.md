@@ -11,9 +11,10 @@ If you like it please give it a upvote here: http://raspberrypi.stackexchange.co
 * Search for filenames with wildcards
 * Autoplay next video
 * Mark of already viewed videos
+* Play media from a remote Subsonic Server
 
 ## Requirements
-`sudo apt-get install php5-cli`
+`sudo apt-get install php5-cli php-xml`
 
 ## Run
 To create a simple php webserver listening on port 4321, you can change the port to whatever you want.
@@ -32,6 +33,7 @@ Add the following line to crontab with `sudo crontab -e` to start the simple php
 Make sure that the root folder and the folder "tmp", where you have installed the omxwebgui, have the rights CHMOD 777. For example you install it under `/home/pi/omxwebgui` than the folder `/home/pi/omxwebgui` and `/home/pi/omxwebgui/tmp` need chmod 777. If that does not work for try to set all files and folders to 777 but that shouldn't be necessary. 
 * If you using a own webserver that runs under `www-data` and you have some `/dev/vchiq` permission problems than you need to run `sudo usermod -a -G video www-data` to give that `www-data` user the correct permissions (thx to Sergio). More information here: http://raspberrypi.stackexchange.com/questions/19436/how-can-i-permanently-fix-dev-vchiq-permission-errors
 * If you are using a webserver maybe you need to set the owner of the files and folder to `www-data` if you have permission errors
+* If content from the Subsonic Server is not showing in the list, double check the given credentials. Address should not include 'http://' or ending '/'
 
 ## Screenshot
 ![alt text](http://i.imgur.com/ZIrqPFX.jpg "Screenshot")
