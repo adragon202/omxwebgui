@@ -66,6 +66,10 @@ try{
                             }
                         }
                     }
+                }else {
+                    # start gui
+                    $output = $return = "";
+                    exec('bash '.escapeshellcmd(__DIR__."/gui-start.sh"), $output, $return);
                 }
                 break;
         }
