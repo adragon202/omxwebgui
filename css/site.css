@@ -217,3 +217,7 @@ textarea, input{outline: none;}
 .footer{
     padding-top: 30px;
 }
+
+.files .directory{
+    background: #212F3D;
+}

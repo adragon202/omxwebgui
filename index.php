@@ -21,9 +21,15 @@ header("Pragma: no-cache");
 require(__DIR__."/lib/functions.php");
 require(__DIR__."/lib/Translations.class.php");
 require(__DIR__."/lib/OMX.class.php");
+require(__DIR__."/lib/subsonic.php");
 
 try{
 
+    //Get Subsonic Settings
+    $subsonicFile = __DIR__."/subsonic.json";
+    $subsonic = file_exists($subsonicFile) ? json_decode(file_get_contents($subsonicFile), true) : array();
+    updateSubsonicAuth($subsonic);
+    //Get Options
     $optionsFile = __DIR__."/options.json";
     $options = file_exists($optionsFile) ? json_decode(file_get_contents($optionsFile), true) : array();
     $folders = isset($options["folders"]) ? $options["folders"] : array();
@@ -48,7 +54,22 @@ try{
                             $options["viewed"][$hash] = true;
                             file_put_contents($optionsFile, json_encode($options));
                         }
+                        # Check  Subsonic
+                        if(strpos($data["path"], '&id=') !== false) {
+                            if(!isset($data["name"])) {
+                                $tmpid = explode("&",$data["path"])[4];
+                                $data["id"] = str_replace("id=","",$tmpid);
+                                $info = getSubsonicRequest("info",$data["id"]);
+                                foreach($info->song as $songs){
+                                    $data["name"] = "Subsonic:".$songs["path"];
+                                }
+                            }
+                        }
                     }
+                }else {
+                    # start gui
+                    $output = $return = "";
+                    exec('bash '.escapeshellcmd(__DIR__."/gui-start.sh"), $output, $return);
                 }
                 break;
         }
@@ -61,6 +82,7 @@ try{
         switch($_POST["action"]){
             # getting the filelist
             case "get-filelist":
+                # Resolve Local Files
                 $files = array();
                 foreach($folders as $folder){
                     $files = array_merge($files, isStreamUrl($folder) ? array($folder) : getVideoFiles($folder));
@@ -68,12 +90,29 @@ try{
                 foreach($files as $file){
                     $classes = array("file");
                     if(isset($options["viewed"][getPathHash($file)])) $classes[] = "viewed";
-                    echo '<div class="'.implode(" ", $classes).'" data-path="'.$file.'"><span class="eye"></span> <span class="path">'.$file.'</span></div>';
+                    echo '<div class="'.implode(" ", $classes).'" data-folder="0" data-path="'.$file.'" data-subsonicid="0"><span class="eye"></span> <span class="path">'.$file.'</span></div>';
                 }
+                # Check for Subsonic Connection
+                if (!testSubsonicConnection()) {
+                    exit;
+                    break;
+                }
+                # Resolve Subsonic Files
+                $remotefiles = getSubsonicFiles();
+                # Draw Subsonic Files
+                foreach($remotefiles as $remotefile) {
+                    $classes = array("file");
+                    if(isset($options["viewed"][getPathHash($remotefile["name"])])) $classes[] = "viewed";
+                    echo '<div class="'.implode(" ", $classes).' directory  subsonic" data-folder="'.$remotefile["directory"].'" data-path="'.$remotefile["name"].'" data-subsonicid="'.$remotefile["id"].'"><span class="path">Subsonic:'.$remotefile["name"].'</span></div>';
+                    if($remotefile["directory"]) echo '<div class="list" id="'.$remotefile["id"].'" style="display:none;">'.t("Loading").'...</div>';
+                }
+                # Draw Subsonic Search region
+                echo '<div id="subsonicsearch"></div>';
                 exit;
                 break;
             # save options
             case "save-options":
+                # Save Basic Options
                 $folders = explode("\n", trim($_POST["folders"]));
                 $error = false;
                 foreach($folders as $key => $folder){
@@ -89,6 +128,12 @@ try{
                 $options = array_merge($options, $_POST["option"]);
                 file_put_contents($optionsFile, json_encode($options));
                 echo t("saved");
+                # Save Subsonic Options
+                $subsonic["access"]["address"] = trim($_POST["subsonicAddress"]);
+                $subsonic["access"]["authuser"] = trim($_POST["subsonicAuthUser"]);
+                $subsonic["access"]["authpass"] = trim($_POST["subsonicAuthPass"]);
+                file_put_contents($subsonicFile, json_encode($subsonic));
+                echo "<br/>".t("saved subsonic");
                 if($error) echo t("error.folders");
                 echo "<br/>".t("reload.page");
                 break;
@@ -97,7 +142,16 @@ try{
                 $startCmd = escapeshellarg($_POST["path"])." ".(isset($options["speedfix"]) && $options["speedfix"] ? "1" : "0");
                 switch($_POST["shortcut"]){
                     case "start":
-                        file_put_contents(OMX::$fifoStatusFile, json_encode(array("path" => $_POST["path"])));
+                        $data = array("path" => $_POST["path"]);
+                        if(strpos($_POST["path"], '&id=') !== false) {
+                            $tmpid = explode("&",$_POST["path"])[4];
+                            $data["id"] = str_replace("id=","",$tmpid);
+                            $info = getSubsonicRequest("info",$data["id"]);
+                            foreach($info->song as $songs){
+                                $data["name"] = "Subsonic:".$songs["path"];
+                            }
+                        }
+                        file_put_contents(OMX::$fifoStatusFile, json_encode($data));
                         OMX::sendCommand($startCmd, "start");
                         break;
                     case "p":
@@ -112,6 +166,41 @@ try{
                         OMX::sendCommand(isset($key["shortcut"]) ? $key["shortcut"] : $_POST["shortcut"], "pipe");
                 }
                 break;
+            # expand/hide folder folder
+            case "openfolder":
+                # also has name, id, loaded, and expanded
+                $remotefiles = getSubsonicFiles($_POST["id"]);
+                foreach($remotefiles as $remotefile) {
+                    $classes = array("file");
+                    if(isset($options["viewed"][getPathHash($remotefile["name"])])) $classes[] = "viewed";
+                    if($remotefile["directory"] == "1" || $remotefile["directory"] == "true"){
+                    echo '<div class="'.implode(" ", $classes).' directory subsonic" data-folder="'.$remotefile["directory"].'" data-path="'.$remotefile["name"].'" data-subsonicid="'.$remotefile["id"].'"><span class="path">Subsonic:'.$remotefile["parent"].'/'.$remotefile["name"].'</span></div>';
+                        echo '<div class="list" id="'.$remotefile["id"].'" style="display:none;">'.t("Loading").'...</div>';
+                    }else{
+                        echo '<div class="'.implode(" ", $classes).' subsonic" data-folder="'.$remotefile["directory"].'" data-path="'.$remotefile["path"].'" data-subsonicid="'.$remotefile["id"].'"><span class="eye"></span> <span class="path">Subsonic:'.$remotefile["name"].'</span></div>';
+                    }
+                }
+                exit;
+                break;
+            # Request Subsonic for Search Results
+            case "subsonicsearch":
+                if (!testSubsonicConnection()) {
+                    exit;
+                    break;
+                }
+                $remotefiles = getSubsonicSearch($_POST["search"]);
+                foreach($remotefiles as $remotefile) {
+                    $classes = array("file");
+                    if(isset($options["viewed"][getPathHash($remotefile["name"])])) $classes[] = "viewed";
+                    if($remotefile["directory"] == "1" || $remotefile["directory"] == "true"){
+                        echo '<div class="'.implode(" ", $classes).' directory subsonic" data-folder="'.$remotefile["directory"].'" data-path="'.$remotefile["name"].'" data-subsonicid="'.$remotefile["id"].'"><span class="path">Subsonic:'.$remotefile["parent"].'/'.$remotefile["name"].'</span></div>';
+                        echo '<div class="list" id="'.$remotefile["id"].'" style="display:none;">'.t("Loading").'...</div>';
+                    }else{
+                        echo '<div class="'.implode(" ", $classes).' subsonic" data-folder="'.$remotefile["directory"].'" data-path="'.$remotefile["path"].'" data-subsonicid="'.$remotefile["id"].'"><span class="eye"></span> <span class="path">Subsonic:'.$remotefile["name"].'</span></div>';
+                    }
+                }
+            exit;
+            break;
         }
         die();
     }
@@ -128,6 +217,7 @@ try{
             <script type="text/javascript">
                 var omxHotkeys = <?=json_encode(OMX::$hotkeys)?>;
                 var options = <?=json_encode($options)?>;
+                var subsonic = <?=json_encode($subsonic)?>;
                 var language = <?=json_encode(Translations::$language)?>;
                 var translations = <?=json_encode(Translations::$translations)?>;
             </script>
@@ -143,19 +233,33 @@ try{
                     <div class="box">
                         <form name="opt" method="post" action="">
                             <input type="hidden" name="action" value="save-options"/>
-                            <p><?=nl2br(t("folders.desc"))?></p>
-                            <textarea cols="45" rows="3" name="folders"><?=htmlentities(implode("\n", $folders))?></textarea><br/>
-                            <?=t("ui.language")?>: <select name="option[language]">
-                            <?php foreach(Translations::$languages as $lang => $label){
-                                echo '<option value="'.$lang.'"';
-                                if(isset($options["language"]) && $options["language"] == $lang) echo ' selected="selected"';
-                                echo '>'.$label.'</option>';
-                            }?>
-                            </select><br/>
-                            <?php displayYesNoOption("speedfix", $options) ?><br/>
-                            <?php displayYesNoOption("autoplay-next", $options) ?><br/>
-                            <br/>
-                            <input type="button" class="action button" data-action="save-options" value="<?=t("save")?>"/>
+                            <table style="width:100%;"><tbody>
+                                <tr><td colspan="2">
+                                    <p><?=nl2br(t("folders.desc"))?></p>
+                                    <textarea cols="45" rows="3" name="folders"><?=htmlentities(implode("\n", $folders))?></textarea><br/>
+                                </td></tr>
+                                <tr>
+                                    <td>
+                                        <?=t("ui.language")?>: <select name="option[language]">
+                                        <?php foreach(Translations::$languages as $lang => $label){
+                                            echo '<option value="'.$lang.'"';
+                                            if(isset($options["language"]) && $options["language"] == $lang) echo ' selected="selected"';
+                                            echo '>'.$label.'</option>';
+                                        }?>
+                                        </select><br/>
+                                        <?php displayYesNoOption("speedfix", $options) ?><br/>
+                                        <?php displayYesNoOption("autoplay-next", $options) ?><br/>
+                                        <br/>
+                                        <input type="button" class="action button" data-action="save-options" value="<?=t("save")?>"/>
+                                    </td>
+                                    <td>
+                                        Subsonic Credentials<br>
+                                        <input type="text" name="subsonicAddress" placeholder="Server" value="<?=$subcred["access"]["address"]?>"><br>
+                                        <input type="text" name="subsonicAuthUser" placeholder="UserName" value="<?=$subcred["access"]["authuser"]?>"><br>
+                                        <input type="password" name="subsonicAuthPass" placeholder="Password" value="<?=$subcred["access"]["authpass"]?>">
+                                    </td>
+                                </tr>
+                            </tbody></table>
                         </form>
                     </div>
                 </div>
@@ -191,3 +295,4 @@ try{
     echo $e->getMessage()."\n\n";
     echo $e->getTraceAsString();
 }
+
